@@ -280,6 +280,7 @@ AudioInput::AudioInput()
 	bResetEncoder = true;
 
 	pfMicInput = pfEchoInput = nullptr;
+	psMicInputStereo = nullptr;
 
 	iBitrate    = 0;
 	dPeakSignal = dPeakSpeaker = dPeakMic = dPeakCleanMic = 0.0;
@@ -318,6 +319,7 @@ AudioInput::~AudioInput() {
 		speex_resampler_destroy(srsEcho);
 
 	delete[] pfMicInput;
+	delete[] psMicInputStereo;
 	delete[] pfEchoInput;
 }
 
@@ -512,6 +514,7 @@ void AudioInput::initializeMixer() {
 	if (srsEcho)
 		speex_resampler_destroy(srsEcho);
 	delete[] pfMicInput;
+	delete[] psMicInputStereo;
 	delete[] pfEchoInput;
 
 	if (iMicFreq != iSampleRate)
@@ -520,6 +523,7 @@ void AudioInput::initializeMixer() {
 	iMicLength = (iFrameSize * iMicFreq) / iSampleRate;
 
 	pfMicInput = new float[iMicLength];
+	psMicInputStereo = new short[iMicLength * 2]; // For L+R interleaved
 
 	if (iEchoChannels > 0) {
 		bEchoMulti = (Global::get().s.echoOption == EchoCancelOptionID::SPEEX_MULTICHANNEL);
@@ -564,6 +568,21 @@ void AudioInput::addMic(const void *data, unsigned int nsamp) {
 		// Append mix into pfMicInput frame buffer (converts 16bit pcm->float if necessary)
 		imfMic(pfMicInput + iMicFilled, data, left, iMicChannels, uiMicChannelMask);
 
+		if (iMicChannels == 2) {
+			// Save the raw interleaved stereo samples before the pointer advances
+			short *dest = psMicInputStereo + (iMicFilled * 2);
+			if (eMicFormat == SampleFloat) {
+				const float *src = reinterpret_cast<const float *>(data);
+				const float mul = 32768.f;
+				for (unsigned int j = 0; j < left * 2; ++j) {
+					dest[j] = static_cast<short>(qBound(-32768.f, src[j] * mul, 32767.f));
+				}
+			} else {
+				const short *src = reinterpret_cast<const short *>(data);
+				memcpy(dest, src, left * 2 * sizeof(short));
+			}
+		}
+
 		iMicFilled += left;
 		nsamp -= left;
 
@@ -582,29 +601,11 @@ void AudioInput::addMic(const void *data, unsigned int nsamp) {
 			// STEREO MUSIC MODE: when capturing 2 channels, bypass the resampler (mono-only)
 			// and the downmix path. Instead, encode the interleaved stereo samples directly.
 			if (iMicChannels == 2) {
-				// We need iFrameSize * STEREO_CHANNELS interleaved samples (L R L R ...).
-				// pfMicInput holds iMicLength mono samples from the imfMic downmix call above,
-				// but we must grab the raw stereo data from 'data' pointer going back one frame.
-				// Since 'data' already advanced, we compute the start of this frame by rewinding.
-				// Easier: we directly look at the original data before imfMic mixed it.
-				// Unfortunately, 'data' has moved past this frame. We reuse pfMicInput which
-				// contains the MONO downmix — not what we want.
-				//
-				// CORRECT approach: capture stereo separately. Since imfMic already ran (mono mix),
-				// we use pfMicInput as the LEFT channel reference. For true stereo, we need to
-				// re-read the raw data, which is no longer accessible here.
-				//
-				// Workaround: allocate a stereo short buffer and duplicate mono samples into both
-				// channels. This at least confirms the stereo encoder path works correctly.
-				// TODO: Hook earlier in the capture path to preserve true L/R channels.
 				const int stereoSamples = iFrameSize * 2;
 				short *psStereo = (short *) alloca(stereoSamples * sizeof(short));
-				const float mul = 32768.f;
-				for (int j = 0; j < iFrameSize; ++j) {
-					const short s = static_cast<short>(qBound(-32768.f, (pfMicInput[j] * mul), 32767.f));
-					psStereo[j * 2 + 0] = s; // L channel
-					psStereo[j * 2 + 1] = s; // R channel (mirror of L until true stereo capture is wired)
-				}
+				// Copy the true stereo data we captured
+				memcpy(psStereo, psMicInputStereo, stereoSamples * sizeof(short));
+				
 				encodeAudioFrame(AudioChunk(psStereo));
 			} else {
 				// ---- MONO PATH (original) ----
@@ -1001,7 +1002,10 @@ void AudioInput::encodeAudioFrame(AudioChunk chunk) {
 
 	bool bIsSpeech = false;
 
-	if (level > Global::get().s.fVADmax) {
+	if (isStereoCapture) {
+		// STEREO MUSIC MODE: Force VAD to active to ensure continuous transmission of music
+		bIsSpeech = true;
+	} else if (level > Global::get().s.fVADmax) {
 		// Voice-activation threshold has been reached
 		bIsSpeech = true;
 	} else if (level > Global::get().s.fVADmin && bPreviousVoice) {
@@ -1044,7 +1048,7 @@ void AudioInput::encodeAudioFrame(AudioChunk chunk) {
 	bool bTalkingWhenMuted = false;
 	if (Global::get().s.bMute || ((Global::get().s.lmLoopMode != Settings::Local) && p && (p->bMute || p->bSuppress))
 		|| Global::get().bPushToMute || (voiceTargetID < 0)) {
-		bTalkingWhenMuted = bIsSpeech;
+		bTalkingWhenMuted = bIsSpeech && !isStereoCapture;
 		bIsSpeech         = false;
 	}
 

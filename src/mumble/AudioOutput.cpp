@@ -709,7 +709,7 @@ bool AudioOutput::mix(void *outbuff, unsigned int frameCount) {
 
 				float maxVolume = 0.0f;
 
-				if (validListener
+				if (validListener && !buffer->bStereo
 					&& ((buffer->fPos[0] != 0.0f) || (buffer->fPos[1] != 0.0f) || (buffer->fPos[2] != 0.0f))) {
 					// Add position to position map
 #ifdef USE_MANUAL_PLUGIN
@@ -820,13 +820,19 @@ bool AudioOutput::mix(void *outbuff, unsigned int frameCount) {
 						maxVolume              = std::max(maxVolume, channelVol);
 						float *RESTRICT o      = output + s;
 						if (buffer->bStereo) {
-							// Linear-panning stereo stream according to the projection of fSpeaker vector on left-right
-							// direction.
-							// frame: for a stereo stream, the [LR] pair inside ...[LR]LRLRLR.... is a frame
-							for (unsigned int i = 0; i < frameCount; ++i)
-								o[i * nchan] += (pfBuffer[2 * i] * fStereoPanningFactor[2 * s + 0]
-												 + pfBuffer[2 * i + 1] * fStereoPanningFactor[2 * s + 1])
-												* channelVol;
+							if (nchan == 2) {
+								// True stereo isolation for 2-channel output (bypasses cross-talk from fStereoPanningFactor)
+								for (unsigned int i = 0; i < frameCount; ++i)
+									o[i * nchan] += pfBuffer[2 * i + s] * channelVol;
+							} else {
+								// Linear-panning stereo stream according to the projection of fSpeaker vector on left-right
+								// direction.
+								// frame: for a stereo stream, the [LR] pair inside ...[LR]LRLRLR.... is a frame
+								for (unsigned int i = 0; i < frameCount; ++i)
+									o[i * nchan] += (pfBuffer[2 * i] * fStereoPanningFactor[2 * s + 0]
+													 + pfBuffer[2 * i + 1] * fStereoPanningFactor[2 * s + 1])
+													* channelVol;
+							}
 						} else {
 							for (unsigned int i = 0; i < frameCount; ++i)
 								o[i * nchan] += pfBuffer[i] * channelVol;

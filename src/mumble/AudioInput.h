@@ -249,6 +249,7 @@ protected:
 	static constexpr unsigned int MUTE_CUE_DELAY = 5000;
 
 	float *pfMicInput;
+	short *psMicInputStereo;
 	float *pfEchoInput;
 
 	Resynchronizer resync;
