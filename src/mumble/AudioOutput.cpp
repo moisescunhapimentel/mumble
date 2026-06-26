@@ -821,7 +821,6 @@ bool AudioOutput::mix(void *outbuff, unsigned int frameCount) {
 						float *RESTRICT o      = output + s;
 						if (buffer->bStereo) {
 							if (nchan == 2) {
-								// True stereo isolation for 2-channel output (bypasses cross-talk from fStereoPanningFactor)
 								for (unsigned int i = 0; i < frameCount; ++i)
 									o[i * nchan] += pfBuffer[2 * i + s] * channelVol;
 							} else {

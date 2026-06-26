@@ -286,9 +286,6 @@ void PulseAudioSystem::eventCallback(pa_mainloop_api *api, pa_defer_event *) {
 					if ((pss.format != PA_SAMPLE_FLOAT32NE) && (pss.format != PA_SAMPLE_S16NE))
 						pss.format = PA_SAMPLE_FLOAT32NE;
 					pss.rate = SAMPLE_RATE;
-					// STEREO MUSIC MODE: request 2-channel (stereo) capture from the microphone.
-					// If the device has fewer channels, PulseAudio will use what is available.
-					// The AudioInput pipeline detects the actual channel count via iMicChannels.
 					pss.channels = 2;
 
 					pasInput = m_pulseAudio.stream_new(pacContext, "Microphone", &pss, nullptr);

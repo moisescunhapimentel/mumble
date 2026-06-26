@@ -234,20 +234,17 @@ AudioInput::AudioInput()
 	activityState = ActivityStateActive;
 	opusState     = nullptr;
 
-	// STEREO MUSIC MODE: Create encoder with 2 channels and AUDIO application for music quality
-	// This bypasses the voice-optimized VOIP/LOWDELAY modes and encodes stereo L/R audio
 	opusState = opus_encoder_create(SAMPLE_RATE, STEREO_CHANNELS, OPUS_APPLICATION_AUDIO, nullptr);
 	qWarning("AudioInput: Opus encoder set for STEREO MUSIC mode (%d channels, %d bps)",
 			 STEREO_CHANNELS, STEREO_MUSIC_BITRATE);
 
-	// Configure encoder for high-quality stereo music transmission
-	opus_encoder_ctl(opusState, OPUS_SET_FORCE_CHANNELS(STEREO_CHANNELS));        // Force stereo output
-	opus_encoder_ctl(opusState, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));               // Optimize for music (not voice)
-	opus_encoder_ctl(opusState, OPUS_SET_BITRATE(STEREO_MUSIC_BITRATE));           // 160 kbps high fidelity
-	opus_encoder_ctl(opusState, OPUS_SET_COMPLEXITY(10));                          // Maximum encoder quality (CPU: OK for x86)
-	opus_encoder_ctl(opusState, OPUS_SET_PACKET_LOSS_PERC(5));                     // Expect up to 5% packet loss
-	opus_encoder_ctl(opusState, OPUS_SET_INBAND_FEC(1));                           // Enable in-band FEC for loss recovery
-	opus_encoder_ctl(opusState, OPUS_SET_VBR(0));                                  // CBR for consistent bitrate
+	opus_encoder_ctl(opusState, OPUS_SET_FORCE_CHANNELS(STEREO_CHANNELS));
+	opus_encoder_ctl(opusState, OPUS_SET_SIGNAL(OPUS_SIGNAL_MUSIC));
+	opus_encoder_ctl(opusState, OPUS_SET_BITRATE(STEREO_MUSIC_BITRATE));
+	opus_encoder_ctl(opusState, OPUS_SET_COMPLEXITY(10));
+	opus_encoder_ctl(opusState, OPUS_SET_PACKET_LOSS_PERC(5));
+	opus_encoder_ctl(opusState, OPUS_SET_INBAND_FEC(1));
+	opus_encoder_ctl(opusState, OPUS_SET_VBR(0));
 
 #ifdef USE_RNNOISE
 	denoiseState = rnnoise_create(nullptr);
@@ -523,7 +520,7 @@ void AudioInput::initializeMixer() {
 	iMicLength = (iFrameSize * iMicFreq) / iSampleRate;
 
 	pfMicInput = new float[iMicLength];
-	psMicInputStereo = new short[iMicLength * 2]; // For L+R interleaved
+	psMicInputStereo = new short[iMicLength * 2];
 
 	if (iEchoChannels > 0) {
 		bEchoMulti = (Global::get().s.echoOption == EchoCancelOptionID::SPEEX_MULTICHANNEL);
@@ -569,7 +566,6 @@ void AudioInput::addMic(const void *data, unsigned int nsamp) {
 		imfMic(pfMicInput + iMicFilled, data, left, iMicChannels, uiMicChannelMask);
 
 		if (iMicChannels == 2) {
-			// Save the raw interleaved stereo samples before the pointer advances
 			short *dest = psMicInputStereo + (iMicFilled * 2);
 			if (eMicFormat == SampleFloat) {
 				const float *src = reinterpret_cast<const float *>(data);
@@ -598,17 +594,13 @@ void AudioInput::addMic(const void *data, unsigned int nsamp) {
 			// Frame complete
 			iMicFilled = 0;
 
-			// STEREO MUSIC MODE: when capturing 2 channels, bypass the resampler (mono-only)
-			// and the downmix path. Instead, encode the interleaved stereo samples directly.
 			if (iMicChannels == 2) {
 				const int stereoSamples = iFrameSize * 2;
 				short *psStereo = (short *) alloca(stereoSamples * sizeof(short));
-				// Copy the true stereo data we captured
 				memcpy(psStereo, psMicInputStereo, stereoSamples * sizeof(short));
 				
 				encodeAudioFrame(AudioChunk(psStereo));
 			} else {
-				// ---- MONO PATH (original) ----
 				// If needed resample frame
 				float *pfOutput = srsMic ? (float *) alloca(iFrameSize * sizeof(float)) : nullptr;
 				float *ptr      = srsMic ? pfOutput : pfMicInput;
@@ -878,11 +870,8 @@ int AudioInput::encodeOpusFrame(short *source, int size, EncodingOutputBuffer &b
 		bResetEncoder = false;
 	}
 
-	// STEREO MUSIC MODE: always use the high-quality music bitrate, not the server-negotiated voice bitrate
 	opus_encoder_ctl(opusState, OPUS_SET_BITRATE(STEREO_MUSIC_BITRATE));
 
-	// 'size' is the total interleaved sample count (iFrameSize * STEREO_CHANNELS * iBufferedFrames).
-	// opus_encode expects the frame size in samples *per channel*, so we divide by STEREO_CHANNELS.
 	const int samplesPerChannel = size / STEREO_CHANNELS;
 	len = opus_encode(opusState, source, samplesPerChannel, &buffer[0], static_cast<opus_int32>(buffer.size()));
 	const int tenMsFrameCount = (samplesPerChannel / iFrameSize);
@@ -930,17 +919,11 @@ void AudioInput::encodeAudioFrame(AudioChunk chunk) {
 	QMutexLocker l(&qmSpeex);
 	resetAudioProcessor();
 
-	// gainValue is used for dPeakCleanMic. In stereo mode, AGC is bypassed, so gainValue=0.
 	std::int32_t gainValue = 0;
 
-	// STEREO MUSIC MODE: bypass all mono voice processing (echo cancel, AGC, noise suppression, VAD).
-	// These DSP filters operate on mono signals and would corrupt stereo content.
-	// Instead, pass the raw stereo mic samples directly to the Opus encoder.
-	// iMicChannels is set to 2 by PulseAudio when stereo capture is active.
 	const bool isStereoCapture = (iMicChannels == STEREO_CHANNELS);
 
 	if (!isStereoCapture) {
-		// ---- MONO PATH: apply full voice processing pipeline ----
 		gainValue = m_preprocessor.getAGCGain();
 
 		if (noiseCancel == Settings::NoiseCancelSpeex || noiseCancel == Settings::NoiseCancelBoth) {
@@ -973,8 +956,6 @@ void AudioInput::encodeAudioFrame(AudioChunk chunk) {
 
 		m_preprocessor.run(*psSource);
 	} else {
-		// ---- STEREO PATH: skip voice processing, use raw stereo PCM directly ----
-		// chunk.mic contains iFrameSize * STEREO_CHANNELS interleaved samples (L R L R ...)
 		psSource = chunk.mic;
 	}
 
@@ -1003,7 +984,6 @@ void AudioInput::encodeAudioFrame(AudioChunk chunk) {
 	bool bIsSpeech = false;
 
 	if (isStereoCapture) {
-		// STEREO MUSIC MODE: Force VAD to active to ensure continuous transmission of music
 		bIsSpeech = true;
 	} else if (level > Global::get().s.fVADmax) {
 		// Voice-activation threshold has been reached
@@ -1149,8 +1129,6 @@ void AudioInput::encodeAudioFrame(AudioChunk chunk) {
 	const unsigned int samplesPerChannel = iFrameSize / iMicChannels;
 	emit audioInputEncountered(psSource, samplesPerChannel, iMicChannels, SAMPLE_RATE, bIsSpeech);
 
-	// In stereo mode, we have iFrameSize * STEREO_CHANNELS total interleaved samples per frame.
-	// In mono mode, we have iFrameSize samples per frame.
 	const int samplesPerFrame = isStereoCapture ? (iFrameSize * STEREO_CHANNELS) : iFrameSize;
 
 	int len = 0;
@@ -1163,7 +1141,6 @@ void AudioInput::encodeAudioFrame(AudioChunk chunk) {
 
 	// Encode via Opus
 	encoded = false;
-	// Insert the correct number of samples: stereo = iFrameSize*2 interleaved samples, mono = iFrameSize
 	opusBuffer.insert(opusBuffer.end(), psSource, psSource + samplesPerFrame);
 	++iBufferedFrames;
 
@@ -1181,7 +1158,6 @@ void AudioInput::encodeAudioFrame(AudioChunk chunk) {
 
 		Q_ASSERT(iBufferedFrames == iAudioFrames);
 
-		// Pass total interleaved sample count to encoder; encodeOpusFrame divides by STEREO_CHANNELS internally.
 		len = encodeOpusFrame(&opusBuffer[0], iBufferedFrames * samplesPerFrame, buffer);
 		opusBuffer.clear();
 		if (len <= 0) {

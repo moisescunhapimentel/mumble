@@ -14,11 +14,26 @@
 Mumble is an Open Source, low-latency and high-quality voice-chat program
 written on top of Qt and Opus.
 
+> [!NOTE]
+> This repository is a **fork** of the official [Mumble](https://github.com/mumble-voip/mumble) project.
+> It introduces support for high-fidelity stereo audio transmission and playback (*Dual Channel Real*).
+
 There are two modules in Mumble; the client (mumble) and the server (mumble-server formerly known as murmur).
 The client works on Windows, Linux, FreeBSD, OpenBSD, and macOS,
 while the server should work on anything Qt can be installed on.
 
 The documentation of the project can be found on [the website](https://www.mumble.info/documentation/).
+
+
+## Stereo Audio Support
+
+This fork modifies the Mumble client and server to support high-fidelity stereo audio transmission, bypassing mono-optimized voice processing when stereo input is detected. Key features include:
+
+* **True Stereo Capture:** Captures genuine Left and Right audio channels directly from the audio interface (e.g., PulseAudio), avoiding downmixing to mono.
+* **Continuous Audio Transmission:** Bypasses Voice Activity Detection (VAD) and suppression when transmitting stereo audio, ensuring an uninterrupted audio stream (ideal for music transmission).
+* **High-Fidelity Encoding:** Uses the Opus codec configured for high-quality stereo audio with a target bitrate of 160 kbps.
+* **Stereo Playback Isolation:** Bypasses positional 3D panning and cross-talk matrix logic for stereo streams, maintaining clean separation of Left and Right channels on 2-channel output devices.
+* **Server Enforcement:** Prioritizes Opus codec usage for robust stereo routing.
 
 
 ## Contributing

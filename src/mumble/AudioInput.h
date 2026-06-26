@@ -33,12 +33,8 @@ class AudioInput;
 struct OpusEncoder;
 struct DenoiseState;
 
-/// Number of audio channels for stereo music mode transmission.
-/// When enabled, the Opus encoder uses 2 channels (L+R) instead of 1 (mono).
 static constexpr int STEREO_CHANNELS = 2;
 
-/// Target bitrate in bits/s for stereo music mode.
-/// 160 kbps provides high-fidelity stereo audio suitable for music transmission.
 static constexpr int STEREO_MUSIC_BITRATE = 160000;
 
 using AudioInputPtr = std::shared_ptr< AudioInput >;
